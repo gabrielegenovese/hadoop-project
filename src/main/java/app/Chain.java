@@ -5,6 +5,7 @@ import java.io.IOException;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.conf.Configured;
 import org.apache.hadoop.fs.Path;
+import org.apache.hadoop.io.IntWritable;
 import org.apache.hadoop.io.Text;
 import org.apache.hadoop.mapreduce.Job;
 import org.apache.hadoop.mapreduce.Mapper;
@@ -133,8 +134,58 @@ class SecondReducer extends Reducer<Text, Text, Text, Text> {
                 title = movieTitle;
             }
         }
-        ret.set(title + " " + max);
+        ret.set(title + "|" + max);
         context.write(key, ret);
+    }
+}
+
+class FreqMapper extends Mapper<Object, Text, Text, Text> {
+
+    private final Text id = new Text();
+    private final static Text one = new Text("1");
+
+    @Override
+    public void map(Object key, Text value, Context context) throws IOException, InterruptedException {
+        String[] vals = value.toString().split("\\|");
+        String title = vals[0];
+        id.set(title);
+        context.write(id, one);
+    }
+}
+
+class ThirdReducer extends Reducer<Text, Text, Text, Text> {
+
+    @Override
+    public void reduce(Text key, Iterable<Text> values, Context context) throws IOException, InterruptedException {
+        int sum = 0;
+        for (Text a : values) {
+            sum += 1;
+        }
+        context.write(new Text(Integer.toString(sum)), key);
+    }
+}
+
+class GroupMapper extends Mapper<Object, Text, IntWritable, Text> {
+
+    @Override
+    public void map(Object key, Text value, Context context) throws IOException, InterruptedException {
+        context.write(new IntWritable(Integer.parseInt(key.toString())), value);
+    }
+}
+
+class FourthReducer extends Reducer<IntWritable, Text, Text, Text> {
+    private final Text id = new Text();
+    private final Text ret = new Text();
+
+    @Override
+    public void reduce(IntWritable key, Iterable<Text> values, Context context) throws IOException, InterruptedException {
+        String retS = "";
+        for (Text t : values) {
+            retS += t.toString() + " ";
+        }
+        id.set(Integer.toString(key.get()));
+        ret.set(retS.substring(0, retS.length() - 1));
+        context.write(id, ret);
     }
 }
 
@@ -145,10 +196,9 @@ public class Chain extends Configured implements Tool {
     @Override
     public int run(String args[]) throws IOException, InterruptedException, ClassNotFoundException {
         cf = new Configuration();
-        // Configura e lancia Job 1
+        // Configuration of Job 1
         Job job1 = Job.getInstance(cf, "Job 1");
         job1.setJarByClass(Chain.class);
-        // Configura mapper e reducer per Job 1
         job1.setMapperClass(MovieMapper.class);
         job1.setMapOutputKeyClass(Text.class);
         job1.setMapOutputValueClass(Text.class);
@@ -156,18 +206,17 @@ public class Chain extends Configured implements Tool {
         job1.setOutputKeyClass(Text.class);
         job1.setOutputValueClass(Text.class);
         FileInputFormat.addInputPath(job1, new Path(args[0]));
-        Path intermediateOutput = new Path("intermediate_output");
-        FileOutputFormat.setOutputPath(job1, intermediateOutput);
-        intermediateOutput.getFileSystem(cf).delete(intermediateOutput, true);
+        Path intermediateOutput1 = new Path("intermediate_output1");
+        FileOutputFormat.setOutputPath(job1, intermediateOutput1);
+        intermediateOutput1.getFileSystem(cf).delete(intermediateOutput1, true);
 
         if (!job1.waitForCompletion(true)) {
             return 1;
         }
 
-        // Configura e lancia Job 2
+        // Configure Job 2
         Job job2 = Job.getInstance(cf, "Job 2");
         job2.setJarByClass(Chain.class);
-        // Configura mapper e reducer per Job 2
         job2.setInputFormatClass(KeyValueTextInputFormat.class);
         job2.setMapperClass(UserMapper.class);
         job2.setMapOutputKeyClass(Text.class);
@@ -175,11 +224,51 @@ public class Chain extends Configured implements Tool {
         job2.setReducerClass(SecondReducer.class);
         job2.setOutputKeyClass(Text.class);
         job2.setOutputValueClass(Text.class);
-        FileInputFormat.addInputPath(job2, intermediateOutput);
+        FileInputFormat.addInputPath(job2, intermediateOutput1);
+        FileInputFormat.addInputPath(job2, new Path(args[0]));
+        Path intermediateOutput2 = new Path("intermediate_output2");
+        FileOutputFormat.setOutputPath(job2, intermediateOutput2);
+        intermediateOutput2.getFileSystem(cf).delete(intermediateOutput2, true);
+
+        if (!job2.waitForCompletion(true)) {
+            return 1;
+        }
+
+        // Configure Job 3
+        Job job3 = Job.getInstance(cf, "Job 3");
+        job3.setJarByClass(Chain.class);
+        job3.setInputFormatClass(KeyValueTextInputFormat.class);
+        job3.setMapperClass(FreqMapper.class);
+        job3.setMapOutputKeyClass(Text.class);
+        job3.setMapOutputValueClass(Text.class);
+        job3.setReducerClass(ThirdReducer.class);
+        job3.setOutputKeyClass(Text.class);
+        job3.setOutputValueClass(Text.class);
+        FileInputFormat.addInputPath(job3, intermediateOutput2);
+        FileInputFormat.addInputPath(job3, new Path(args[0]));
+        Path intermediateOutput3 = new Path("intermediate_output3");
+        FileOutputFormat.setOutputPath(job3, intermediateOutput3);
+        intermediateOutput3.getFileSystem(cf).delete(intermediateOutput3, true);
+
+        if (!job3.waitForCompletion(true)) {
+            return 1;
+        }
+
+        // Configure Job 4
+        Job job4 = Job.getInstance(cf, "Job 4");
+        job4.setJarByClass(Chain.class);
+        job4.setInputFormatClass(KeyValueTextInputFormat.class);
+        job4.setMapperClass(GroupMapper.class);
+        job4.setMapOutputKeyClass(IntWritable.class);
+        job4.setMapOutputValueClass(Text.class);
+        job4.setReducerClass(FourthReducer.class);
+        job4.setOutputKeyClass(IntWritable.class);
+        job4.setOutputValueClass(Text.class);
+        FileInputFormat.addInputPath(job4, intermediateOutput3);
         Path p = new Path(args[1]);
-        FileOutputFormat.setOutputPath(job2, p);
+        FileOutputFormat.setOutputPath(job4, p);
         p.getFileSystem(cf).delete(p, true);
-        return job2.waitForCompletion(true) ? 0 : 1;
+        return job4.waitForCompletion(true) ? 0 : 1;
     }
 
     public static void main(String args[]) throws Exception {
