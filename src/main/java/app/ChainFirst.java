@@ -17,7 +17,17 @@ import org.apache.hadoop.mapreduce.lib.output.FileOutputFormat;
 import org.apache.hadoop.util.Tool;
 import org.apache.hadoop.util.ToolRunner;
 
-// Find the name of the highest rated movie per userID
+import com.google.common.collect.Iterables;
+
+// Objective: find the frequency of the highest rated movie per userID.
+// Solution: use a chainFirst of Map/Reduce jobs.
+//-----------------------------------------------------------------------------------
+// First Map: join the files, for each movieId get the title and the rating of a user.
+// Input:  movie.csv and rating.csv files
+// Output: movieId t:movieTitle
+//         movieId r:userId|userRate
+//         movieId r:userId|userRate
+//         ...
 class MovieMapper extends Mapper<Object, Text, Text, Text> {
 
     private final Text id = new Text();
@@ -55,6 +65,12 @@ class MovieMapper extends Mapper<Object, Text, Text, Text> {
     }
 }
 
+// First Reduce: compress in a single line all the ratings of a movie.
+// Input:  movieId t:movieTitle
+//         movieId r:userId|userRate
+//         movieId r:userId|userRate
+//         ...
+// Output: movieTitle userId|userRate,userId|userRate,...
 class FirstReducer extends Reducer<Text, Text, Text, Text> {
 
     private final Text id = new Text();
@@ -63,33 +79,32 @@ class FirstReducer extends Reducer<Text, Text, Text, Text> {
     @Override
     public void reduce(Text key, Iterable<Text> values, Context context) throws IOException, InterruptedException {
         String title = "";
-
+        StringBuilder sb = new StringBuilder();
         for (Text t : values) {
             String[] val = t.toString().split(":", 2);
             String letter = val[0];
             String content = val[1];
             if (letter.equals("t") && title.equals("")) {
                 title = content;
-                break;
             }
-        }
-
-        StringBuilder sb = new StringBuilder();
-        for (Text t : values) {
-            String[] val = t.toString().split(":", 2);
-            String letter = val[0];
-            String content = val[1];
             if (letter.equals("r")) {
                 sb.append(content).append(",");
             }
         }
-
         id.set(title);
         ret.set(sb.toString());
-        context.write(id, ret); // movieTitle userId|rating,userId|rating,...
+        context.write(id, ret);
     }
 }
 
+// Second Map: for each movie get the ratings 
+// Input:  movieTitle userId|userRate,userId|userRate,...
+// Output: userId1 movieTitle|userRate
+//         userId1 movieTitle|userRate
+//         userId2 movieTitle|userRate
+//         userId2 movieTitle|userRate
+//         ...
+//         userIdN movieTitle|userRate
 class UserMapper extends Mapper<Object, Text, Text, Text> {
 
     private final Text id = new Text();
@@ -113,6 +128,18 @@ class UserMapper extends Mapper<Object, Text, Text, Text> {
     }
 }
 
+// Second Reduce: chose one random best rated movie per user
+// Input:  userId1 movieTitle|userRate
+//         userId1 movieTitle|userRate
+//         userId2 movieTitle|userRate
+//         userId2 movieTitle|userRate
+//         ...
+//         userIdN movieTitle|userRate
+// Output: userId1 movieTitle1
+//         userId2 movieTitle2
+//         userId3 movieTitle2
+//         ...
+//         userIdN movieTitleN
 class SecondReducer extends Reducer<Text, Text, Text, Text> {
 
     private final Text ret = new Text();
@@ -128,17 +155,32 @@ class SecondReducer extends Reducer<Text, Text, Text, Text> {
             }
             String movieTitle = val[0];
             String rate = val[1];
-            float rateF = Float.parseFloat(rate);
-            if (max < rateF) {
-                max = rateF;
-                title = movieTitle;
+            try {
+                float rateF = Float.parseFloat(rate);
+                if (max < rateF) {
+                    max = rateF;
+                    title = movieTitle;
+                }
+            } catch (NumberFormatException e) {
+                System.out.println(e.toString() + ": Couldn't parse " + rate);
             }
         }
-        ret.set(title + "|" + max);
+        ret.set(title);
         context.write(key, ret);
     }
 }
 
+// Third Map: chose one random best rated movie per user
+// Input:  userId1 movieTitle1
+//         userId2 movieTitle2
+//         userId3 movieTitle2
+//         ...
+//         userIdN movieTitleN
+// Output: movieTitle1 1
+//         movieTitle2 1
+//         movieTitle2 1
+//         ...
+//         movieTitleN 1
 class FreqMapper extends Mapper<Object, Text, Text, Text> {
 
     private final Text id = new Text();
@@ -146,25 +188,42 @@ class FreqMapper extends Mapper<Object, Text, Text, Text> {
 
     @Override
     public void map(Object key, Text value, Context context) throws IOException, InterruptedException {
-        String[] vals = value.toString().split("\\|");
-        String title = vals[0];
-        id.set(title);
+        id.set(value.toString());
         context.write(id, one);
     }
 }
 
+// Third Reduce: Compute the frequency
+// Input:  movieTitle1 1
+//         movieTitle2 1
+//         movieTitle2 1
+//         ...
+//         movieTitleN 1
+// Output: movieTitle1 1
+//         movieTitle2 2
+//         movieTitle3 2
+//         ...
+//         movieTitleN N
 class ThirdReducer extends Reducer<Text, Text, Text, Text> {
 
     @Override
     public void reduce(Text key, Iterable<Text> values, Context context) throws IOException, InterruptedException {
-        int sum = 0;
-        for (Text a : values) {
-            sum += 1;
-        }
+        int sum = Iterables.size(values);
         context.write(new Text(Integer.toString(sum)), key);
     }
 }
 
+// Fourth Map: Switch  number and title (use IntWritable for evaluating entries in ascending order)
+// Input:  movieTitle1 1
+//         movieTitle2 2
+//         movieTitle3 2
+//         ...
+//         movieTitleN N
+// Output: 1 movieTitle1
+//         2 movieTitle2
+//         2 movieTitle3
+//         ...
+//         N movieTitleN
 class GroupMapper extends Mapper<Object, Text, IntWritable, Text> {
 
     @Override
@@ -173,7 +232,18 @@ class GroupMapper extends Mapper<Object, Text, IntWritable, Text> {
     }
 }
 
+// Fourth Reduce: Concatenate every title (use IntWritable for evaluating entries in ascending order)
+// Input:  1 movieTitle1
+//         2 movieTitle2
+//         2 movieTitle3
+//         ...
+//         N movieTitleN
+// Output: 1 movieTitle1
+//         2 movieTitle2
+//         ...
+//         N movieTitleN
 class FourthReducer extends Reducer<IntWritable, Text, Text, Text> {
+
     private final Text id = new Text();
     private final Text ret = new Text();
 
@@ -189,7 +259,7 @@ class FourthReducer extends Reducer<IntWritable, Text, Text, Text> {
     }
 }
 
-public class Chain extends Configured implements Tool {
+public class ChainFirst extends Configured implements Tool {
 
     static Configuration cf;
 
@@ -198,7 +268,7 @@ public class Chain extends Configured implements Tool {
         cf = new Configuration();
         // Configuration of Job 1
         Job job1 = Job.getInstance(cf, "Job 1");
-        job1.setJarByClass(Chain.class);
+        job1.setJarByClass(ChainFirst.class);
         job1.setMapperClass(MovieMapper.class);
         job1.setMapOutputKeyClass(Text.class);
         job1.setMapOutputValueClass(Text.class);
@@ -216,7 +286,7 @@ public class Chain extends Configured implements Tool {
 
         // Configure Job 2
         Job job2 = Job.getInstance(cf, "Job 2");
-        job2.setJarByClass(Chain.class);
+        job2.setJarByClass(ChainFirst.class);
         job2.setInputFormatClass(KeyValueTextInputFormat.class);
         job2.setMapperClass(UserMapper.class);
         job2.setMapOutputKeyClass(Text.class);
@@ -236,7 +306,7 @@ public class Chain extends Configured implements Tool {
 
         // Configure Job 3
         Job job3 = Job.getInstance(cf, "Job 3");
-        job3.setJarByClass(Chain.class);
+        job3.setJarByClass(ChainFirst.class);
         job3.setInputFormatClass(KeyValueTextInputFormat.class);
         job3.setMapperClass(FreqMapper.class);
         job3.setMapOutputKeyClass(Text.class);
@@ -256,7 +326,7 @@ public class Chain extends Configured implements Tool {
 
         // Configure Job 4
         Job job4 = Job.getInstance(cf, "Job 4");
-        job4.setJarByClass(Chain.class);
+        job4.setJarByClass(ChainFirst.class);
         job4.setInputFormatClass(KeyValueTextInputFormat.class);
         job4.setMapperClass(GroupMapper.class);
         job4.setMapOutputKeyClass(IntWritable.class);
@@ -272,7 +342,7 @@ public class Chain extends Configured implements Tool {
     }
 
     public static void main(String args[]) throws Exception {
-        int res = ToolRunner.run(cf, new Chain(), args);
+        int res = ToolRunner.run(cf, new ChainFirst(), args);
         System.exit(res);
     }
 }
