@@ -20,7 +20,7 @@ import org.apache.hadoop.util.ToolRunner;
 import com.google.common.collect.Iterables;
 
 // Objective: find the frequency of the highest rated movie per userID.
-// Solution: use a chainFirst of Map/Reduce jobs.
+// Solution: use a chain of Map/Reduce jobs.
 //-----------------------------------------------------------------------------------
 // First Map: join the files, for each movieId get the title and the rating of a user.
 // Input:  movie.csv and rating.csv files

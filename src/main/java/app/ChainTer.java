@@ -146,11 +146,12 @@ class AllReducer extends Reducer<Text, Text, IntWritable, Text> {
             }
         }
 
-        // place then in order
+        // place them in order
         Set<Integer> keySet = inv.keySet();
         Integer[] keys = keySet.toArray(new Integer[0]);
         Arrays.sort(keys);
 
+        // write the output
         for (int i : keys) {
             String v = inv.get(i);
             num.set(i);

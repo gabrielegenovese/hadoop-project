@@ -16,10 +16,23 @@
 )
 
 = Hadoop Project
-This project has multiple solution to find out the best approch to the problem
+This project was about creating complex queries on a distributed filesystem. Using the `hadoop` library for `Java`, the main solution was to create a series of Map/Reduce jobs in order to extract how many times a movie was the favourite among the users. I'll present multiple solution to find out the best approch to the problem.
 
+In order to set up the environment to run the project create the `data` folder, move the unzipped data inside it and use the followings commands:
+```shell
+docker compose up -d
+docker exec -it namenode /bin/bash
+hdfs dfs -mkdir /input
+hdfs dfs -put /hadoop/labs/movie-data/movies.csv /input
+hdfs dfs -put /hadoop/labs/movie-data/ratings.csv /input
+```
+
+*N.B.:* after running the project, if you want to run it again, there is no need to delete the `output` or the `intermediate_output` folders because they are automatically removed by the program.
 
 == First solution: four jobs
+
+The first solution combine 4 jobs to reach the desired result. It fully use the Map/rerduce pattern philosofy.
+
 === Design of the solution
 This solution is divided in four jobs:
 - the first one is in charge of joining the two file using movieId as a key
@@ -27,47 +40,51 @@ This solution is divided in four jobs:
 - the third one choose a random favorite movie per user
 - the fourth compute the frequency and format the output
 
+In the code, there are comments over each function that specify how the input and the output of each map reduce is managed.
+
 === Execution
-Exec command: `time hadoop jar hadoop-1.0.jar app.ChainFirst /input /output`
 
-#image("assets/first.png")
+To execute the code, open a new terminal and use the followings commands in the host machine:
 
-Execution time: 4m 13s
-
-Last 5 lines of output: `hdfs dfs -cat /output/part-r-00000`
-```
-...
-2141	"Silence of the Lambs, The (1991)"
-2169	Schindler's List (1993)
-2361	"Godfather, The (1972)"
-2534	Pulp Fiction (1994)
-4036	"Shawshank Redemption, The (1994)"
+```shell
+mvn package
+cp target/hadoop-1.0.jar data
 ```
 
-== Second solution: three jobs
-Exec command: `time hadoop jar hadoop-1.0.jar app.ChainSec /input /output`
+Then, run this command in the `namenode` container: 
 
-#image("assets/second.png")
+`time hadoop jar /hadoop/labs/hadoop-1.0.jar app.ChainFirst /input /output`
 
-Execution time: 3m 40s
-```
-2141	"Silence of the Lambs, The (1991)"
-2169	Schindler's List (1993)
-2361	"Godfather, The (1972)"
-2534	Pulp Fiction (1994)
-4036	"Shawshank Redemption, The (1994)"
-```
-== Third solution: two jobs
-Exec command: `time hadoop jar hadoop-1.0.jar app.ChainTer /input /output`
+The program should give the following output:
 
-#image("assets/third.png")
+#figure(
+  image("assets/first.png"),
+  caption: [First's solution output showed using `hdfs dfs -cat /output/part-r-00000`]
+)
 
-Execution time: 2m 8s
+The solution run in about 4 minutes and 13 seconds. The most favoured movie was "The Shawshank Redemption" (1994) with 4036 preference. 
+
+== Other solutions: three and two jobs
+
+It's also possible to execute different kind of solutions with lower jobs. This was done because I noted that creating an entire new job is an heavy operation, so I wanted to explore how the execution time can improve using less jobs. 
+
+The two other solutions can be executed using:
+
+```shell
+time hadoop jar /hadoop/labs/hadoop-1.0.jar app.ChainSec /input /output
+time hadoop jar /hadoop/labs/hadoop-1.0.jar app.ChainTer /input /output
 ```
-3719	Schindler's List (1993)
-4692	Inglourious Basterds (2009)
-5243	"Lord of the Rings: The Two Towers, The (2002)"
-9066	"Silence of the Lambs, The (1991)"
-9487	Fargo (1996)
-```
+
+The second solution with three jobs ends in about 3 minutes and 40 minutes. The third solution with two jobs ends in about 2 minutes and 8 minutes.
+
+#figure(
+  image("assets/second.png", width: 68%),
+  caption: [Second's solution output]
+)
+
+
+#figure(
+  image("assets/third.png", width: 68%),
+  caption: [Third's solution output (note that is different from the other two solutions, this is due to the randomness of chosing a user's favorit movie)],
+)
 
